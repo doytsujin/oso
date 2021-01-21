@@ -2,6 +2,7 @@
 
 Tests come from the relationship document & operations laid out there.
 """
+from django_oso.partial import TRUE_FILTER
 import pytest
 from django.core.exceptions import PermissionDenied
 
@@ -70,7 +71,7 @@ def test_authorize_model_basic(post_fixtures):
     """Test that a simple policy with checks on non-relationship attributes is correct."""
     Oso.load_str(
         """
-        allow("user", "read", post: test_app2::Post) if post.access_level = "public";
+        allow(u, "read", post: test_app2::Post) if u in ["admin", "user"] and post.access_level = "public";
         allow("user", "write", post: test_app2::Post) if post.access_level = "private";
         allow("admin", "read", _post: test_app2::Post);
         allow("moderator", "read", post: test_app2::Post) if
@@ -82,7 +83,7 @@ def test_authorize_model_basic(post_fixtures):
     authorize_filter = authorize_model(None, Post, actor="user", action="read")
     assert (
         str(authorize_filter)
-        == "(AND: (NOT (AND: ('pk__in', []))), ('access_level', 'public'))"
+        == f"(AND: {str(TRUE_FILTER)}, ('access_level', 'public'))"
     )
     posts = Post.objects.filter(authorize_filter)
     assert posts.count() == 5
@@ -91,7 +92,7 @@ def test_authorize_model_basic(post_fixtures):
     authorize_filter = authorize_model(None, Post, actor="user", action="write")
     assert (
         str(authorize_filter)
-        == "(AND: (NOT (AND: ('pk__in', []))), ('access_level', 'private'))"
+        == f"(AND: {str(TRUE_FILTER)}, ('access_level', 'private'))"
     )
     posts = Post.objects.filter(authorize_filter)
     assert posts.count() == 4
@@ -99,17 +100,23 @@ def test_authorize_model_basic(post_fixtures):
     assert posts.all()[1].contents == "foo private post 2"
 
     authorize_filter = authorize_model(None, Post, actor="admin", action="read")
-    assert str(authorize_filter) == "(NOT (AND: ('pk__in', [])))"
+    assert str(authorize_filter) == str(TRUE_FILTER)
     posts = Post.objects.filter(authorize_filter)
     assert posts.count() == 9
 
     authorize_filter = authorize_model(None, Post, actor="moderator", action="read")
-    expected = (
-        "(OR: ("
-        + "AND: (NOT (AND: ('pk__in', []))), ('access_level', 'private'), ('needs_moderation', True)), "
-        + "(AND: (NOT (AND: ('pk__in', []))), ('access_level', 'public'), ('needs_moderation', True)))"
-    )
-    assert str(authorize_filter) == expected
+    expected = f"""
+         (OR:
+            (AND:
+                {str(TRUE_FILTER)},
+                ('access_level', 'private'),
+                ('needs_moderation', True)),
+            (AND:
+                {str(TRUE_FILTER)},
+                ('access_level', 'public'),
+                ('needs_moderation', True)))
+    """
+    assert str(authorize_filter) == " ".join(expected.split())
     posts = Post.objects.filter(authorize_filter)
     assert posts.count() == 4
     assert posts.all()[0].contents == "private for moderation"
@@ -590,7 +597,7 @@ def test_reverse_many_relationship(tag_nested_many_many_fixtures):
     authorize_filter = authorize_model(None, Post, actor=user, action="read")
     assert (
         str(authorize_filter)
-        == "(AND: (NOT (AND: ('pk__in', []))), ('users', <User: User object (1)>))"
+        == f"(AND: {str(TRUE_FILTER)}, ('users', <User: User object (1)>))"
     )
     posts = Post.objects.filter(authorize_filter)
     expected = """
